@@ -733,6 +733,8 @@ html.is-theme-switching .logs {
   padding-top: var(--sp-2);
 }
 .sidebar-actions { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sidebar-actions .sidebar-qq-group { justify-content: flex-start; text-align: left; }
+.modal.modal-qq-group { width: min(100%, 390px); }
 .sidebar-network {
   display: flex;
   flex-direction: column;

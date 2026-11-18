@@ -1210,7 +1210,44 @@ async function saveStartupPreference(enabled, nextTarget) {
   }
 }
 
-/** 侧栏里的全局客户端重启动作：所有页面共用同一份确认状态。 */
+function openQqGroupDialog() {
+  const groupNumber = '1083286851';
+  const status = el('div', { class: 'hint', attrs: { role: 'status' } });
+  const openButton = el('button', {
+    class: 'btn btn-primary', type: 'button',
+    on: { click: () => void openQq() },
+  }, [el('span', { text: '打开 QQ' }), icon('external', 13)]);
+
+  async function openQq() {
+    if (openButton.disabled) return;
+    openButton.disabled = true;
+    status.textContent = '正在打开 QQ…';
+    try {
+      await api.openQqGroup();
+      status.textContent = '已请求打开 QQ。如未弹出群资料，请复制群号后在 QQ 中搜索。';
+    } catch {
+      status.textContent = '未能打开 QQ，请复制群号后在 QQ 中搜索。';
+    } finally {
+      openButton.disabled = false;
+    }
+  }
+
+  openModal(el('section', { class: 'modal modal-qq-group', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'F-AI QQ 群' } }, [
+    el('header', { class: 'modal-head' }, [
+      el('div', { class: 'grow' }, [el('h2', { text: 'F-AI QQ 群' })]),
+      el('button', { class: 'btn btn-icon', type: 'button', attrs: { 'aria-label': '关闭' }, on: { click: closeModal } }, [icon('x', 14)]),
+    ]),
+    el('div', { class: 'modal-body' }, [el('div', {}, [el('span', { text: '群号 ' }), el('strong', { class: 'mono', text: groupNumber })]), status]),
+    el('footer', { class: 'modal-foot' }, [
+      el('span', { class: 'right' }),
+      el('button', { class: 'btn btn-ghost', type: 'button', on: { click: () => void copyText(groupNumber, '群号') } }, [icon('copy', 13), el('span', { text: '复制群号' })]),
+      openButton,
+    ]),
+  ]));
+  void openQq();
+}
+
+/** 侧栏全局操作。 */
 function renderSidebarAction() {
   if (!dom.sidebarActions) return;
   const mode = state.network && state.network.proxyMode === 'direct' ? 'direct' : 'system';
@@ -1318,6 +1355,12 @@ function renderSidebarAction() {
     : null;
   dom.sidebarActions.replaceChildren(
     ...(updateNotice ? [updateNotice] : []),
+    el('button', {
+      class: 'btn btn-sm btn-accent sidebar-qq-group', type: 'button',
+      disabled: typeof api?.openQqGroup !== 'function' ? true : null,
+      attrs: { 'aria-haspopup': 'dialog' },
+      on: { click: openQqGroupDialog },
+    }, [icon('message', 13), el('span', { class: 'grow', text: '加入 F-AI QQ 群' }), icon('external', 12)]),
     networkControl,
     startupControl,
     el('div', { class: 'sidebar-relaunch-wrap' }, [warning, button]),

@@ -170,6 +170,38 @@ function registerIpc(deps) {
 
   handle('gptplus:external:open-link', openExternalHttpUrl);
 
+  handle('gptplus:community:open-qq', async () => {
+    let params;
+    try {
+      // Resolve only the group's official short link. Do not follow the redirect or
+      // accept a URL from the renderer. QQ signs the invitation for its desktop handler.
+      const response = await ctx.network('https://qm.qq.com/q/lqzCUcTvag', {
+        redirect: 'manual',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(6000),
+      });
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (response.status < 300 || response.status >= 400 || !location) throw new Error();
+      const invite = new URL(location);
+      if (invite.origin !== 'https://qun.qq.com' || invite.pathname !== '/universal-share/share') throw new Error();
+      const authKey = invite.searchParams.get('authKey');
+      const data = invite.searchParams.get('busi_data');
+      if (!authKey || !data) throw new Error();
+      const { groupCode } = JSON.parse(Buffer.from(data, 'base64').toString('utf8'));
+      if (groupCode !== '1083286851') throw new Error();
+      params = Buffer.from(JSON.stringify({ groupUin: groupCode, timeStamp: Date.now(), authKey, auth: '' })).toString('hex').toUpperCase();
+    } catch {
+      throw new Error('暂时无法获取 QQ 群邀请');
+    }
+    try {
+      await shell.openExternal(`tencent://groupwpa/?subcmd=all&param=${params}&jump_from=`);
+      return true;
+    } catch {
+      throw new Error('Windows 未能打开 QQ 客户端');
+    }
+  });
+
   const publish = () => {
     const s = ctx.status();
     const peer = typeof ctx.peerState === 'function' ? ctx.peerState() : null;

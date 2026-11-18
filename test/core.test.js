@@ -535,6 +535,45 @@ test('external link IPC opens only http(s) URLs', async (t) => {
   await assert.rejects(() => open({}, 'javascript:alert(1)'), /只允许打开 http\(s\) 链接/);
 });
 
+test('QQ 群 IPC 使用官方邀请打开固定群，拒绝非 QQ 跳转或其他群', async (t) => {
+  const { registerIpc } = require(path.join(CORE, 'ipc.js'));
+  const dir = tmpDir('qq-group-ipc');
+  cleanup(t, dir);
+  const store = createStore({ configPath: path.join(dir, 'config.json') });
+  const handlers = new Map();
+  const opened = [];
+  const payload = Buffer.from(JSON.stringify({ groupCode: '1083286851' })).toString('base64');
+  let location = `https://qun.qq.com/universal-share/share?busi_data=${encodeURIComponent(payload)}&authKey=test%2Bkey`;
+  registerIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    shell: { openExternal: async (url) => { opened.push(url); } },
+    dialog: {},
+    ctx: { store, log: () => {}, onLogEvent: () => () => {}, network: async (url, options) => {
+      assert.equal(url, 'https://qm.qq.com/q/lqzCUcTvag');
+      assert.equal(options.redirect, 'manual');
+      return new Response(null, { status: 302, headers: { location } });
+    } },
+  });
+  const open = handlers.get('gptplus:community:open-qq');
+  assert.equal(typeof open, 'function');
+  assert.equal(await open({}, 'file:///C:/Windows/System32/calc.exe'), true);
+  assert.equal(opened.length, 1);
+  const uri = new URL(opened[0]);
+  assert.equal(uri.protocol, 'tencent:');
+  assert.equal(uri.hostname, 'groupwpa');
+  assert.equal(uri.searchParams.get('subcmd'), 'all');
+  const { groupUin, authKey, timeStamp, auth } = JSON.parse(Buffer.from(uri.searchParams.get('param'), 'hex'));
+  assert.deepEqual({ groupUin, authKey, auth }, { groupUin: '1083286851', authKey: 'test+key', auth: '' });
+  assert.ok(Number.isFinite(timeStamp));
+
+  location = location.replace('qun.qq.com', 'qun.qq.com.example.com');
+  await assert.rejects(() => open({}), /QQ 群邀请/);
+  const otherGroup = Buffer.from(JSON.stringify({ groupCode: '123456789' })).toString('base64');
+  location = `https://qun.qq.com/universal-share/share?busi_data=${encodeURIComponent(otherGroup)}&authKey=test`;
+  await assert.rejects(() => open({}), /QQ 群邀请/);
+  assert.equal(opened.length, 1, '无效邀请不得启动任何应用');
+});
+
 test('peer sync: new/default-off, complete disappearance/recovery preserves local preference; failures preserve models', async (t) => {
   const dir = tmpDir('peer-sync');
   cleanup(t, dir);

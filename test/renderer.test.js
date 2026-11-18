@@ -2268,6 +2268,49 @@ test('提供商配置：便携加密文件点击和拖拽共用预览，覆盖�
   }
 });
 
+test('侧栏 QQ 群直接唤起客户端，失败时可复制群号', async () => {
+  const tmp = copyRendererToTemp();
+  try {
+    installFakeDom();
+    const nodes = new Map([...read(HTML).matchAll(/\bid="([^"]+)"/g)].map((match) => [match[1], new FakeNode('div')]));
+    document.getElementById = (id) => nodes.get(id) || null;
+    let launches = 0;
+    const copied = [];
+    navigator.clipboard = { writeText: async (text) => copied.push(text) };
+    window.gptplus = {
+      ...makeApi(fixtureState(), []),
+      openQqGroup: async () => {
+        if (++launches === 1) throw new Error('QQ 无法打开');
+        return true;
+      },
+    };
+    await import(pathToFileURL(path.join(tmp, 'app.js')).href);
+    await flush();
+    const sidebar = nodes.get('sidebar-actions');
+    const entry = buttonsWithText(sidebar, '加入 F-AI QQ 群')[0];
+    const network = sidebar.find('sidebar-network')[0];
+    assert.equal(sidebar.children[sidebar.children.indexOf(network) - 1], entry);
+    click(entry);
+    await flush();
+    assert.equal(launches, 1, '首次点击就应尝试唤起 QQ');
+    const popup = nodes.get('modal-root');
+    assert.match(popup.allText(), /1083286851/);
+    assert.match(popup.allText(), /未能打开 QQ/);
+    click(buttonsWithText(popup, '复制群号')[0]);
+    await flush();
+    assert.deepEqual(copied, ['1083286851']);
+    click(buttonsWithText(popup, '打开 QQ')[0]);
+    await flush();
+    assert.equal(launches, 2);
+    assert.match(popup.allText(), /已请求打开 QQ/);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+    delete globalThis.navigator;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('开机自启动目标支持双向切换，关闭再开启时保留所选目标', async () => {
   const tmp = copyRendererToTemp();
   try {

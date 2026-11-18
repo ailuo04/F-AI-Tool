@@ -50,6 +50,7 @@ function subscribe(channel, cb) {
 
 contextBridge.exposeInMainWorld('gptplus', {
   openExternalLink: (url) => invoke('gptplus:external:open-link', url),
+  openQqGroup: () => invoke('gptplus:community:open-qq'),
 
   // 状态与提供商
   getStatus: () => invoke('gptplus:status:get'),
