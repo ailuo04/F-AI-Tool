@@ -1,0 +1,55 @@
+name: Release F-AI Tool for Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'ailuo04/F-AI-Tool'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned Windows installer
+        run: npm run dist:unsigned
+
+      - name: Check release artifacts
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $installer = Get-Item -LiteralPath "dist/F-AI-Tool-$version-setup.exe" -ErrorAction Stop
+          $latest = Get-ChildItem dist -Filter 'latest.yml' -File
+          if (-not $installer) { throw 'Windows installer was not produced.' }
+          if (-not $latest) { throw 'latest.yml was not produced; auto-update metadata is missing.' }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            (Get-ChildItem dist -Filter 'F-AI-Tool-*-setup.exe' -File).FullName
+            (Get-ChildItem dist -Filter 'F-AI-Tool-*-setup.exe.blockmap' -File).FullName
+            (Get-ChildItem dist -Filter 'latest.yml' -File).FullName
+          )
+          $notes = Join-Path $env:GITHUB_WORKSPACE "docs/releases/F-AI-Tool-$($env:GITHUB_REF_NAME).md"
+          if (Test-Path $notes) {
+            gh release create $env:GITHUB_REF_NAME @assets --title "F-AI Tool $env:GITHUB_REF_NAME" --notes-file $notes
+          } else {
+            gh release create $env:GITHUB_REF_NAME @assets --title "F-AI Tool $env:GITHUB_REF_NAME" --generate-notes
+          }

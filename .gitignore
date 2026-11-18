@@ -1,0 +1,55 @@
+# 依赖与构建产物
+node_modules/
+dist/
+out/
+dist-*/
+build/*-preview/
+build/nsis-temp*/
+
+# 运行时/探针产物（不进版本库）
+probe/
+tools/asar-out/
+tools/out/
+tools/variants/
+tools/testhome*/
+tools/*.log
+
+# 逆向调研的原始抓包与隔离 CODEX_HOME 副本（体积大，结论已沉淀到 research/*.md 与 docs/）
+research/capture/homes/
+research/capture/codex-home/
+research/capture/logs/
+research/capture/*.log
+
+# 本机敏感数据
+*.local.json
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+*.gptplus-providers
+.gptplus/
+.gptplus-public/
+.codex/
+
+# 拆分前的旧发布记录、内部文档和一次性本机探针保留在开发机
+/docs/releases/v*.md
+/docs/superpowers/
+/docs/visual-concepts/
+/docs/verification.md
+/research/
+/tools/appserver-*.cjs
+/tools/catalog-*.cjs
+/tools/offsets.cjs
+/tools/realhome-probe.cjs
+/tools/relay-e2e.cjs
+/tools/seed-appdata.cjs
+/tools/validate-catalog.cjs
+/tools/variants*.cjs
+
+# Codex 本地计划与原始抓包
+.zcode/
+research/capture/*.jsonl
+research/example-request.json

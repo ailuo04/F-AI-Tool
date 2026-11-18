@@ -1,0 +1,391 @@
+'use strict';
+
+// 与 Codex++ 的用量状态栏保持同一数据源：只读本机 Codex rollout 尾部，
+// 不读取消息正文，也不把完整会话文件加载进内存。
+const fs = require('node:fs');
+const path = require('node:path');
+
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = require('node:sqlite'));
+} catch {
+  // 旧版 Node/Electron 没有 node:sqlite 时退回标准 sessions 目录扫描。
+}
+
+const INITIAL_WINDOW_BYTES = 512 * 1024;
+const MAX_WINDOW_BYTES = 8 * 1024 * 1024;
+const EVENT_LIMIT = 24;
+const TAIL_CACHE_EVENTS = 128;
+const MAX_CACHED_READERS = 64;
+const DEFAULT_RESOLUTION_TTL_MS = 1000;
+const MAX_SCAN_ENTRIES = 8192;
+const MAX_SCAN_DEPTH = 4;
+
+function normalizeSessionId(value) {
+  const id = String(value || '').replace(/^local:/, '').trim();
+  if (!id || id === '__proto__' || id === 'prototype' || id === 'constructor') return '';
+  return /^[A-Za-z0-9_.-]{8,128}$/.test(id) ? id : '';
+}
+
+function normalizeFsPath(value) {
+  let text = String(value || '').trim();
+  if (text.startsWith('\\\\?\\')) text = text.slice(4);
+  return path.normalize(text);
+}
+
+function canonicalPath(value) {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return normalizeFsPath(value);
+  }
+}
+
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function allowedRolloutPath(home, rawPath) {
+  const candidate = canonicalPath(rawPath);
+  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) return null;
+  if (!/\.jsonl$/i.test(candidate)) return null;
+  const roots = ['sessions', 'archived_sessions']
+    .map((name) => path.join(home, name))
+    .filter((root) => fs.existsSync(root))
+    .map(canonicalPath);
+  return roots.some((root) => isWithin(root, candidate)) ? candidate : null;
+}
+
+function candidateDatabases(home) {
+  const out = [
+    path.join(home, 'state_5.sqlite'),
+    path.join(home, 'sqlite', 'state_5.sqlite'),
+  ];
+  try {
+    for (const name of fs.readdirSync(path.join(home, 'sqlite'))) {
+      if (/\.db$/i.test(name)) out.push(path.join(home, 'sqlite', name));
+    }
+  } catch {
+    // 目录不存在或当前用户无法读取时，继续走文件名扫描。
+  }
+  return [...new Set(out.map((item) => path.normalize(item)))];
+}
+
+function resolveFromDatabases(home, sessionId) {
+  if (!DatabaseSync) return [];
+  const matches = [];
+  for (const dbPath of candidateDatabases(home)) {
+    if (!fs.existsSync(dbPath)) continue;
+    let db = null;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      try { db.exec('PRAGMA busy_timeout=50'); } catch { /* best effort */ }
+      const row = db.prepare('SELECT rollout_path FROM threads WHERE id = ?1 LIMIT 1').get(sessionId);
+      const resolved = allowedRolloutPath(home, row?.rollout_path);
+      if (resolved) matches.push(resolved);
+    } catch {
+      // 某个数据库正在迁移或 schema 不兼容时，继续查下一个。
+    } finally {
+      try { db?.close(); } catch { /* ignore */ }
+    }
+  }
+  return matches;
+}
+
+function resolveByScan(home, sessionId) {
+  const roots = ['sessions', 'archived_sessions']
+    .map((name) => path.join(home, name))
+    .filter((root) => fs.existsSync(root));
+  const queue = roots.map((root) => ({ root, depth: 0 }));
+  const matches = [];
+  let visited = 0;
+  while (queue.length && visited < MAX_SCAN_ENTRIES) {
+    const { root, depth } = queue.pop();
+    let entries;
+    try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (visited++ >= MAX_SCAN_ENTRIES) break;
+      const target = path.join(root, entry.name);
+      if (entry.isDirectory() && depth < MAX_SCAN_DEPTH) {
+        queue.push({ root: target, depth: depth + 1 });
+        continue;
+      }
+      if (!entry.isFile() || !/\.jsonl$/i.test(entry.name) || !entry.name.includes(sessionId)) continue;
+      const resolved = allowedRolloutPath(home, target);
+      if (resolved) matches.push(resolved);
+    }
+  }
+  return matches;
+}
+
+function numberField(source, key) {
+  const value = Number(source && source[key]);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function usageEvent(record, turnId) {
+  if (record?.type !== 'event_msg' || record?.payload?.type !== 'token_count') return null;
+  const info = record.payload.info;
+  const last = info?.last_token_usage;
+  if (!last || typeof last !== 'object') return null;
+  const inputTokens = numberField(last, 'input_tokens');
+  const outputTokens = numberField(last, 'output_tokens');
+  const totalTokens = numberField(last, 'total_tokens');
+  const event = {
+    t: typeof record.timestamp === 'string' ? record.timestamp : '',
+    input_tokens: inputTokens,
+    cached_input_tokens: numberField(last, 'cached_input_tokens'),
+    output_tokens: outputTokens,
+    reasoning_output_tokens: numberField(last, 'reasoning_output_tokens'),
+    total_tokens: totalTokens || inputTokens + outputTokens,
+    context_window: numberField(info, 'model_context_window'),
+    turn_output_tokens: numberField(info?.total_token_usage, 'output_tokens'),
+    cache_usage_available: Object.prototype.hasOwnProperty.call(last, 'cached_input_tokens'),
+  };
+  if (turnId) event.turn_id = turnId;
+  if (!(event.input_tokens || event.output_tokens || event.total_tokens)) return null;
+  return event;
+}
+
+function consumeUsageRecord(record, state) {
+  const type = record?.type;
+  const payload = record?.payload || {};
+  const eventType = payload.type;
+  const turnId = typeof payload.turn_id === 'string' && payload.turn_id ? payload.turn_id : null;
+
+  if (type === 'turn_context') {
+    if (turnId && state.currentTurnId !== turnId) {
+      state.segmentStart = state.events.length;
+      state.currentTurnId = turnId;
+    }
+    return;
+  }
+  if (type !== 'event_msg') return;
+  if (eventType === 'task_started' || eventType === 'turn_started') {
+    state.segmentStart = state.events.length;
+    state.currentTurnId = turnId;
+    return;
+  }
+  if (['task_complete', 'turn_complete', 'turn_completed', 'task_failed', 'turn_aborted', 'task_aborted'].includes(eventType)) {
+    if (turnId) {
+      for (let index = state.segmentStart; index < state.events.length; index += 1) {
+        if (!state.events[index].turn_id) state.events[index].turn_id = turnId;
+      }
+    }
+    state.segmentStart = state.events.length;
+    state.currentTurnId = null;
+    return;
+  }
+  const event = usageEvent(record, state.currentTurnId);
+  if (event) state.events.push(event);
+}
+
+function readUsageWindow(filePath, start, out) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.statSync(filePath).size;
+    const length = Math.max(0, size - start);
+    const buffer = Buffer.alloc(length);
+    if (length) fs.readSync(fd, buffer, 0, length, start);
+    const lines = buffer.toString('utf8').split('\n');
+    if (start > 0) lines.shift();
+
+    const state = { currentTurnId: null, segmentStart: 0, events: out };
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || (!line.includes('"event_msg"') && !line.includes('"turn_context"'))) continue;
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      consumeUsageRecord(record, state);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readUsageTail(filePath, limit = EVENT_LIMIT) {
+  const size = fs.statSync(filePath).size;
+  let window = INITIAL_WINDOW_BYTES;
+  for (;;) {
+    const start = Math.max(0, size - window);
+    const events = [];
+    readUsageWindow(filePath, start, events);
+    const latestTurnKnown = typeof events.at(-1)?.turn_id === 'string';
+    if ((events.length >= 2 && latestTurnKnown) || start === 0 || window >= MAX_WINDOW_BYTES) {
+      return events.slice(-limit);
+    }
+    window = Math.min(MAX_WINDOW_BYTES, window * 4);
+  }
+}
+
+/**
+ * rollout 在生成期间会持续追加。状态栏每秒读取一次，不能每次都重新解析
+ * 尾部 512 KB；首次建立缓存后只消费新增字节，文件被截断或替换时再重建。
+ */
+function createIncrementalUsageTail(limit = EVENT_LIMIT) {
+  const states = new Map();
+
+  const identity = (stat) => `${stat.dev || 0}:${stat.ino || 0}:${stat.birthtimeMs || 0}`;
+  const remember = (filePath, state) => {
+    states.delete(filePath);
+    states.set(filePath, state);
+    while (states.size > MAX_CACHED_READERS) states.delete(states.keys().next().value);
+  };
+
+  function build(filePath, stat) {
+    const events = readUsageTail(filePath, Math.max(limit, TAIL_CACHE_EVENTS));
+    return {
+      id: identity(stat),
+      offset: stat.size,
+      pending: Buffer.alloc(0),
+      events,
+      currentTurnId: events.at(-1)?.turn_id || null,
+      segmentStart: events.length,
+    };
+  }
+
+  function read(filePath) {
+    const stat = fs.statSync(filePath);
+    let state = states.get(filePath);
+    if (!state || stat.size < state.offset || identity(stat) !== state.id) {
+      state = build(filePath, stat);
+      remember(filePath, state);
+    }
+
+    if (stat.size > state.offset) {
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        const length = stat.size - state.offset;
+        const chunk = Buffer.alloc(length);
+        if (length) fs.readSync(fd, chunk, 0, length, state.offset);
+        state.offset = stat.size;
+        const combined = state.pending.length ? Buffer.concat([state.pending, chunk]) : chunk;
+        let cursor = 0;
+        let newline = combined.indexOf(0x0a, cursor);
+        while (newline !== -1) {
+          const line = combined.subarray(cursor, newline).toString('utf8').replace(/\r$/, '').trim();
+          cursor = newline + 1;
+          if (line && (line.includes('"event_msg"') || line.includes('"turn_context"'))) {
+            try { consumeUsageRecord(JSON.parse(line), state); } catch { /* 跳过写入中的坏行 */ }
+          }
+          newline = combined.indexOf(0x0a, cursor);
+        }
+        state.pending = combined.subarray(cursor);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      const excess = state.events.length - TAIL_CACHE_EVENTS;
+      if (excess > 0) {
+        state.events.splice(0, excess);
+        state.segmentStart = Math.max(0, state.segmentStart - excess);
+      }
+      remember(filePath, state);
+    }
+    return state.events.slice(-limit);
+  }
+
+  return read;
+}
+
+/**
+ * 同一会话可能因续接、恢复或客户端重启产生多个 rollout 文件。
+ * 数据库通常只记录主文件，而真实 token_count 可能只出现在续接文件中，
+ * 因此必须比较全部候选，不能拿到第一个文件名命中就返回。
+ */
+function resolveRolloutPath(home, sessionId, readCandidateEvents = (candidate) => readUsageTail(candidate, 1)) {
+  const candidates = [...new Set([
+    ...resolveFromDatabases(home, sessionId),
+    ...resolveByScan(home, sessionId),
+  ].map(canonicalPath))];
+  if (!candidates.length) return null;
+
+  const ranked = candidates.map((candidate) => {
+    let events = [];
+    let mtimeMs = 0;
+    try {
+      events = readCandidateEvents(candidate);
+      mtimeMs = fs.statSync(candidate).mtimeMs;
+    } catch {
+      // 候选文件正被客户端追加时，下一次轮询可以重新尝试。
+    }
+    const latestEventAt = Date.parse(events.at(-1)?.t || '');
+    return {
+      path: candidate,
+      hasUsage: events.length > 0,
+      latestEventAt: Number.isFinite(latestEventAt) ? latestEventAt : 0,
+      mtimeMs,
+      exactPrimary: path.basename(candidate).toLowerCase() === `${sessionId.toLowerCase()}.jsonl`,
+    };
+  });
+
+  ranked.sort((left, right) => (
+    Number(right.hasUsage) - Number(left.hasUsage)
+    || right.latestEventAt - left.latestEventAt
+    || right.mtimeMs - left.mtimeMs
+    || Number(right.exactPrimary) - Number(left.exactPrimary)
+    || left.path.localeCompare(right.path)
+  ));
+  return ranked[0].path;
+}
+
+function unavailable(sessionId, message) {
+  return { status: 'unavailable', session_id: sessionId, message, events: [] };
+}
+
+function createUsageLiveReader({ codexHome, resolutionTtlMs = DEFAULT_RESOLUTION_TTL_MS } = {}) {
+  const home = path.resolve(String(codexHome || ''));
+  const pathCache = new Map();
+  const readTail = createIncrementalUsageTail(EVENT_LIMIT);
+  const ttl = Number.isFinite(Number(resolutionTtlMs)) && Number(resolutionTtlMs) >= 0
+    ? Number(resolutionTtlMs)
+    : DEFAULT_RESOLUTION_TTL_MS;
+  const rememberPath = (id, rollout, now) => {
+    pathCache.delete(id);
+    pathCache.set(id, { path: rollout, checkedAt: now });
+    while (pathCache.size > MAX_CACHED_READERS) pathCache.delete(pathCache.keys().next().value);
+  };
+
+  function read(sessionId) {
+    const id = normalizeSessionId(sessionId);
+    if (!id) return unavailable('', '会话 ID 无效');
+    const now = Date.now();
+    const cached = pathCache.get(id);
+    let rollout = cached?.path || null;
+    const fresh = cached && now - cached.checkedAt < ttl && (!rollout || fs.existsSync(rollout));
+    if (fresh && rollout) {
+      try {
+        const cachedEvents = readTail(rollout);
+        if (cachedEvents.length) return { status: 'ok', session_id: id, events: cachedEvents };
+      } catch {
+        // 文件被续接或替换时，立即重新解析全部候选。
+      }
+    } else if (fresh && !rollout) {
+      return unavailable(id, '未找到本机会话记录');
+    }
+
+    // 同一会话可能出现新的续接文件；即使旧路径仍可读，也要定期重新比较候选。
+    rollout = resolveRolloutPath(home, id, (candidate) => readTail(candidate).slice(-1));
+    if (!rollout) {
+      rememberPath(id, null, now);
+      return unavailable(id, '未找到本机会话记录');
+    }
+    try {
+      const events = readTail(rollout);
+      rememberPath(id, rollout, now);
+      return { status: 'ok', session_id: id, events };
+    } catch (error) {
+      return unavailable(id, `会话记录暂不可读: ${error.message}`);
+    }
+  }
+  return { read, resolveRolloutPath: (id) => resolveRolloutPath(home, normalizeSessionId(id)) };
+}
+
+module.exports = {
+  createUsageLiveReader,
+  normalizeSessionId,
+  resolveRolloutPath,
+  readUsageTail,
+  usageEvent,
+};

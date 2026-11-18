@@ -1,0 +1,416 @@
+'use strict';
+
+const { buildUsageStatuslineStyle, computeUsageSnapshot, formatTokenRate, mergeUsageCacheEntry } = require('./usage-metrics.js');
+
+function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
+  const readyWait = Math.max(500, Number(readyWaitMs) || 12000);
+  const selectedMetrics = {
+    speed: metrics?.speed !== false,
+    cache: metrics?.cache !== false,
+    context: metrics?.context !== false,
+  };
+  const metricsJson = JSON.stringify(selectedMetrics);
+  const balanceJson = JSON.stringify({ enabled: balance?.enabled === true });
+  return `(() => {
+  const READY_WAIT_MS = ${readyWait};
+  const METRICS = ${metricsJson};
+  const BALANCE = ${balanceJson};
+  const ID = "gptplus-codex-usage-statusline";
+  const STYLE_ID = "gptplus-codex-usage-statusline-style";
+  const EXT_ATTR = "data-gptplus-usage-statusline";
+  const CIRCUMFERENCE = 37.7;
+  const SYNC_INTERVAL_MS = 1000;
+  const runtimeKey = "gptplus-usage-statusline-v12";
+  const STYLE_TEXT = ${JSON.stringify(buildUsageStatuslineStyle())};
+  const computeUsageSnapshot = ${computeUsageSnapshot.toString()};
+  const formatTokenRate = ${formatTokenRate.toString()};
+  const mergeUsageCacheEntry = ${mergeUsageCacheEntry.toString()};
+  if (globalThis.__gptplusUsageStatuslineRuntime === runtimeKey && globalThis.__gptplusUsageStatusline) {
+    return { ok: true, installed: true, reused: true };
+  }
+  globalThis.__gptplusUsageStatuslineDispose?.();
+  globalThis.__gptplusUsageStatuslineRuntime = runtimeKey;
+  const state = { node: null, parts: null, threadId: "", timer: 0, observer: null, cache: new Map(), fingerprint: "", balanceSnapshot: null, balanceTimer: 0, resizeObserver: null, disposed: false };
+  const NS = "http://www.w3.org/2000/svg";
+
+  function visible(node) {
+    if (!node || !node.isConnected) return false;
+    const style = getComputedStyle(node);
+    return style.display !== "none" && style.visibility !== "hidden" && node.getBoundingClientRect().width > 0;
+  }
+
+  function textLabels() {
+    const lang = String(document.documentElement?.lang || navigator.language || "").toLowerCase();
+    return lang.startsWith("zh")
+      ? { speed: (v) => v + " tok/s", cache: (v) => "缓存命中 " + v, context: (v) => "上下文 " + v, balance: "余额", aria: "用量状态栏" }
+      : { speed: (v) => v + " tok/s", cache: (v) => "cache hit " + v, context: (v) => "context " + v, balance: "balance", aria: "Usage status line" };
+  }
+
+  function svgIcon(shapes) {
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("width", "13");
+    svg.setAttribute("height", "13");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.4");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const created = [];
+    for (const shape of shapes) {
+      const child = document.createElementNS(NS, shape.tag);
+      for (const [key, value] of Object.entries(shape.attrs)) child.setAttribute(key, value);
+      svg.appendChild(child);
+      created.push(child);
+    }
+    return { svg, created };
+  }
+
+  function ringIcon() {
+    const icon = svgIcon([
+      { tag: "circle", attrs: { cx: "8", cy: "8", r: "6", "stroke-width": "1", "stroke-opacity": "1" } },
+      { tag: "circle", attrs: { cx: "8", cy: "8", r: "6", "stroke-width": "2.2", "stroke-dasharray": "0 " + CIRCUMFERENCE, transform: "rotate(-90 8 8)" } },
+    ]);
+    return { svg: icon.svg, ring: icon.created[1] };
+  }
+
+  function makeItem(root, key, icon) {
+    const item = document.createElement("span");
+    item.className = "gptplus-usage-item";
+    item.dataset.usage = key;
+    item.appendChild(icon);
+    const value = document.createElement("span");
+    value.className = "gptplus-usage-value";
+    value.textContent = "--";
+    item.appendChild(value);
+    root.appendChild(item);
+    return value;
+  }
+
+  function build(node) {
+    node.textContent = "";
+    const parts = {};
+    if (METRICS.speed) {
+      parts.speed = makeItem(node, "speed", svgIcon([
+        { tag: "path", attrs: { d: "M2 12.5a6 6 0 0 1 12 0" } },
+        { tag: "path", attrs: { d: "M8 12.5 10.8 8.6" } },
+      ]).svg);
+    }
+    if (METRICS.cache) {
+      parts.cache = makeItem(node, "cache", svgIcon([
+        { tag: "path", attrs: { d: "M8 2.2c2.5 0 4.5.8 4.5 1.8S10.5 5.8 8 5.8 3.5 5 3.5 4 5.5 2.2 8 2.2Z" } },
+        { tag: "path", attrs: { d: "M3.5 4v8c0 1 2 1.8 4.5 1.8s4.5-.8 4.5-1.8V4" } },
+        { tag: "path", attrs: { d: "M3.5 8c0 1 2 1.8 4.5 1.8S12.5 9 12.5 8" } },
+      ]).svg);
+    }
+    if (METRICS.context) {
+      const ring = ringIcon();
+      parts.context = makeItem(node, "context", ring.svg);
+      parts.ring = ring.ring;
+    }
+    if (BALANCE.enabled) {
+      const item = document.createElement("span");
+      item.className = "gptplus-usage-item gptplus-balance-item";
+      item.dataset.usage = "balance";
+      const coin = document.createElement("span");
+      coin.className = "gptplus-balance-coin";
+      coin.textContent = "$";
+      item.appendChild(coin);
+      const label = document.createElement("span");
+      label.textContent = textLabels().balance;
+      item.appendChild(label);
+      parts.balance = document.createElement("span");
+      parts.balance.className = "gptplus-balance-amount";
+      parts.balance.textContent = "--";
+      item.appendChild(parts.balance);
+      parts.delta = document.createElement("span");
+      parts.delta.id = ID + "-delta";
+      parts.delta.className = "gptplus-balance-delta";
+      parts.delta.setAttribute(EXT_ATTR, "true");
+      parts.delta.setAttribute("aria-hidden", "true");
+      parts.delta.dataset.hidden = "true";
+      // 独立悬浮层不参与信息栏排版，也不受输入框祖先的 overflow 裁切。
+      document.body.appendChild(parts.delta);
+      node.appendChild(item);
+    }
+    state.parts = parts;
+    if (state.balanceSnapshot) paintBalance(state.balanceSnapshot, false);
+    return state.parts;
+  }
+
+  function groupDigits(value) {
+    let output = "";
+    const text = String(value);
+    for (let index = 0; index < text.length; index += 1) {
+      if (index > 0 && (text.length - index) % 3 === 0) output += ",";
+      output += text[index];
+    }
+    return output;
+  }
+
+  function formatBalanceAmount(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (!/^-?(?:0|[1-9][0-9]*)(?:[.][0-9]+)?$/.test(text)) return "--";
+    const [whole, fraction = ""] = text.split(".");
+    return groupDigits(whole) + (fraction ? "." + fraction.slice(0, 2).replace(/0+$/, "") : "");
+  }
+
+  function formatBalanceDelta(value) {
+    const match = String(value == null ? "" : value).trim().match(/^-?(0|[1-9][0-9]*)(?:[.]([0-9]+))?$/);
+    if (!match) return "";
+    const fraction = match[2] || "";
+    let digits = BigInt(match[1] + fraction.slice(0, 3).padEnd(3, "0"));
+    if ((fraction[3] || "0") >= "5") digits += 1n;
+    return "-" + groupDigits(digits / 1000n) + "." + String(digits % 1000n).padStart(3, "0");
+  }
+
+  function positionBalanceDelta() {
+    const parts = state.parts;
+    if (!parts?.delta || !parts.balance?.isConnected || !state.node?.isConnected) return;
+    const anchor = parts.balance.getBoundingClientRect();
+    const bar = state.node.getBoundingClientRect();
+    const viewport = globalThis.visualViewport;
+    const left = (viewport?.offsetLeft || 0) + 8;
+    const top = (viewport?.offsetTop || 0) + 8;
+    const right = (viewport?.offsetLeft || 0) + (viewport?.width || innerWidth) - 8;
+    const bottom = (viewport?.offsetTop || 0) + (viewport?.height || innerHeight) - 8;
+    parts.delta.style.font = getComputedStyle(state.node).font;
+    parts.delta.style.fontWeight = "600";
+    // offsetWidth/Height 不受弹出动画的 transform 影响。
+    const width = parts.delta.offsetWidth;
+    const height = parts.delta.offsetHeight;
+    let x = anchor.right + 6;
+    let y = anchor.top + (anchor.height - height) / 2;
+    if (x + width > right) {
+      x = Math.max(left, Math.min(anchor.right - width, right - width));
+      // 右侧不够时放在整栏外，避免窄窗口换行后遮住其它指标。
+      y = bar.bottom + 6;
+      if (y + height > bottom) y = bar.top - height - 6;
+    }
+    parts.delta.style.left = Math.max(left, Math.min(x, right - width)) + "px";
+    parts.delta.style.top = Math.max(top, Math.min(y, bottom - height)) + "px";
+  }
+
+  function paintBalance(snapshot, showDelta) {
+    const parts = state.parts;
+    if (!parts?.balance) return;
+    const amount = snapshot?.unlimited === true ? "不限额" : formatBalanceAmount(snapshot?.balance);
+    parts.balance.textContent = snapshot?.ok === false ? "!" : amount;
+    const details = ["余额 " + amount];
+    if (snapshot?.totalUsed != null) details.push("消耗值 " + formatBalanceAmount(snapshot.totalUsed));
+    if (snapshot?.error) details.push(snapshot.error);
+    if (snapshot?.delta != null) details.push("最近消耗 " + formatBalanceDelta(snapshot.delta));
+    if (snapshot?.at) details.push("更新于 " + new Date(snapshot.at).toLocaleTimeString());
+    parts.balance.parentElement.title = details.join(" · ");
+    const delta = snapshot?.ok !== false && ["cumulative", "net-balance-change"].includes(snapshot?.deltaKind) ? formatBalanceDelta(snapshot.delta) : "";
+    parts.delta.textContent = delta;
+    if (showDelta && delta) {
+      positionBalanceDelta();
+      // 先落下收起态，再触发弹出；两秒后的隐藏态会沿相反方向收回。
+      void parts.delta.offsetWidth;
+    }
+    parts.delta.dataset.hidden = String(!showDelta || !delta);
+    clearTimeout(state.balanceTimer);
+    if (showDelta && delta) state.balanceTimer = setTimeout(() => { if (parts.delta) parts.delta.dataset.hidden = "true"; }, 2000);
+  }
+
+  function applyBalance(snapshot) {
+    if (state.disposed || !snapshot || typeof snapshot !== "object") return false;
+    state.balanceSnapshot = { ...snapshot };
+    if (state.parts?.balance) paintBalance(state.balanceSnapshot, snapshot.ok !== false);
+    return true;
+  }
+
+  function composerCard() {
+    const cards = [...document.querySelectorAll("[data-composer-surface-variant]")];
+    let fallback = null;
+    for (const card of cards) {
+      if (!visible(card) || card.closest("[" + EXT_ATTR + "]")) continue;
+      fallback = card;
+      if (card.querySelector('.ProseMirror[contenteditable="true"], textarea:not(:disabled):not([readonly]), [role="textbox"][contenteditable="true"]')) return card;
+    }
+    return fallback;
+  }
+
+  function threadId(card) {
+    const root = card?.closest("[data-codex-composer-root]");
+    const composerId = root?.querySelector("[data-above-composer-conversation-id]")?.getAttribute("data-above-composer-conversation-id");
+    const inThread = root?.getAttribute("data-composer-placement") === "thread";
+    const sidebarId = inThread ? document.querySelector('[data-app-action-sidebar-thread-selected="true"][data-app-action-sidebar-thread-id]')?.getAttribute("data-app-action-sidebar-thread-id") : "";
+    const id = String(composerId || sidebarId || "").replace(/^local:/, "").trim();
+    if (!id || id.startsWith("client-new-thread:") || id === "__proto__" || id === "prototype" || id === "constructor") return "";
+    return /^[A-Za-z0-9_.-]{8,128}$/.test(id) ? id : "";
+  }
+
+  function ensureNode(card) {
+    if (!card) return null;
+    let node = state.node;
+    if (!node) {
+      node = document.createElement("div");
+      node.id = ID;
+      node.setAttribute(EXT_ATTR, "true");
+      node.setAttribute("role", "status");
+      state.node = node;
+    }
+    // 插到输入框外层容器之后，让页面布局为状态栏留出高度，避免贴底被裁切。
+    const anchor = card.parentElement || card;
+    if (!node.isConnected || node.previousElementSibling !== anchor) anchor.insertAdjacentElement("afterend", node);
+    return node;
+  }
+
+  function render(value) {
+    const node = state.node;
+    if (!node?.isConnected) return;
+    const parts = state.parts || build(node);
+    const labels = textLabels();
+    const speed = formatTokenRate(value?.speed);
+    const cache = value?.cache == null ? "--" : value.cache.toFixed(1) + "%";
+    const context = value?.context == null ? "--" : Math.round(value.context) + "%";
+    const fingerprint = [
+      speed, cache, context,
+      value?.speedEstimated === true,
+      value?.cacheEstimated === true,
+      value?.contextEstimated === true,
+      value?.window || 0,
+    ].join("|");
+    if (fingerprint === state.fingerprint) return;
+    state.fingerprint = fingerprint;
+    if (parts.speed) parts.speed.textContent = labels.speed(speed);
+    if (parts.cache) parts.cache.textContent = labels.cache(cache);
+    if (parts.context) parts.context.textContent = labels.context(context);
+    if (parts.ring) {
+      const filled = value?.context == null ? 0 : value.context / 100 * CIRCUMFERENCE;
+      parts.ring.setAttribute("stroke-dasharray", filled.toFixed(2) + " " + CIRCUMFERENCE);
+    }
+    node.dataset.hidden = String(Object.keys(parts).length === 0);
+    const details = [];
+    if (parts.speed) details.push("首包后生成速度 " + speed + " tok/s" + (value?.speedEstimated ? "（估算）" : ""));
+    if (parts.cache) details.push("缓存命中 " + cache + (value?.cacheEstimated ? "（估算）" : ""));
+    if (parts.context) details.push("上下文占用 " + context + (value?.contextEstimated ? "（估算）" : ""));
+    if (parts.context && value?.window > 0) details.push("窗口 " + value.window);
+    node.title = details.join(" · ");
+    node.setAttribute("aria-label", labels.aria + "：" + details.join("，"));
+  }
+
+  function hide() {
+    if (state.node) state.node.dataset.hidden = "true";
+    if (state.parts?.delta) state.parts.delta.dataset.hidden = "true";
+    clearTimeout(state.balanceTimer);
+    state.fingerprint = "";
+  }
+
+  function sync() {
+    const card = composerCard();
+    if (!card) { state.threadId = ""; hide(); return null; }
+    const id = threadId(card);
+    const previous = state.threadId;
+    state.threadId = id;
+    ensureNode(card);
+    const cached = state.cache.get(id);
+    render(computeUsageSnapshot(cached?.events, cached?.request));
+    if (state.parts?.delta?.dataset.hidden === "false") positionBalanceDelta();
+    return { id, changed: id !== previous };
+  }
+
+  function apply(id, events, request) {
+    if (state.disposed) return false;
+    const key = String(id || "").trim();
+    if (!key) return false;
+    const previous = state.cache.get(key);
+    const merged = mergeUsageCacheEntry(previous, events, request);
+    if (!merged) return false;
+    state.cache.set(key, merged);
+    while (state.cache.size > 32) state.cache.delete(state.cache.keys().next().value);
+    sync();
+    return true;
+  }
+
+  function context() {
+    if (state.disposed) return null;
+    const current = sync();
+    return { id: current?.id || "", hidden: document.hidden === true, mounted: !!state.node?.isConnected };
+  }
+
+  function tick() {
+    if (state.disposed) return;
+    sync();
+    state.timer = setTimeout(tick, SYNC_INTERVAL_MS);
+  }
+
+  function install() {
+    if (!document.getElementById(STYLE_ID)) {
+      const style = document.createElement("style");
+      style.id = STYLE_ID;
+      style.setAttribute(EXT_ATTR, "true");
+      style.textContent = STYLE_TEXT;
+      document.head?.appendChild(style);
+    }
+    document.getElementById(ID)?.remove();
+    document.getElementById(ID + "-delta")?.remove();
+    const composerSelector = "[data-codex-composer-root], [data-composer-surface-variant], [data-above-composer-conversation-id]";
+    state.observer = new MutationObserver((records) => {
+      const relevant = records.some((record) => {
+        if (record.target?.closest?.("[" + EXT_ATTR + "]")) return false;
+        if (record.type === "attributes") return true;
+        return [...record.addedNodes, ...record.removedNodes].some((node) =>
+          node.nodeType === 1 && !node.matches?.("[" + EXT_ATTR + "]")
+          && (node.matches?.(composerSelector) || node.querySelector?.(composerSelector)));
+      });
+      if (relevant) sync();
+    });
+    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-above-composer-conversation-id", "data-composer-placement", "data-app-action-sidebar-thread-selected", "data-app-action-sidebar-thread-id"] });
+    sync();
+    state.resizeObserver = new ResizeObserver(positionBalanceDelta);
+    if (state.node) state.resizeObserver.observe(state.node);
+    document.addEventListener("scroll", positionBalanceDelta, true);
+    globalThis.addEventListener("resize", positionBalanceDelta);
+    globalThis.visualViewport?.addEventListener("resize", positionBalanceDelta);
+    globalThis.visualViewport?.addEventListener("scroll", positionBalanceDelta);
+    state.timer = setTimeout(tick, 2000);
+    globalThis.__gptplusUsageStatusline = { context, apply, applyBalance };
+    globalThis.__gptplusUsageStatuslineReady = true;
+    globalThis.__gptplusUsageStatuslineDispose = () => {
+      state.disposed = true;
+      globalThis.__gptplusUsageStatuslineReady = false;
+      if (globalThis.__gptplusUsageStatuslineRuntime === runtimeKey) globalThis.__gptplusUsageStatuslineRuntime = "";
+      delete globalThis.__gptplusUsageStatusline;
+      clearTimeout(state.timer);
+      clearTimeout(state.balanceTimer);
+      state.observer?.disconnect();
+      state.resizeObserver?.disconnect();
+      document.removeEventListener("scroll", positionBalanceDelta, true);
+      globalThis.removeEventListener("resize", positionBalanceDelta);
+      globalThis.visualViewport?.removeEventListener("resize", positionBalanceDelta);
+      globalThis.visualViewport?.removeEventListener("scroll", positionBalanceDelta);
+      state.parts?.delta?.remove();
+      state.node?.remove();
+      document.getElementById(STYLE_ID)?.remove();
+    };
+  }
+
+  // 启动阶段 CDP 可能在文档创建前就执行脚本，必须等 body 出现再安装。
+  return new Promise((resolve) => {
+    const deadline = Date.now() + READY_WAIT_MS;
+    const boot = () => {
+      if (state.disposed) { resolve({ ok: true, installed: false, disposed: true }); return; }
+      if (!document.body) {
+        if (Date.now() >= deadline) { resolve({ ok: true, installed: false, pending: true }); return; }
+        setTimeout(boot, 100);
+        return;
+      }
+      try {
+        install();
+        resolve({ ok: true, installed: true });
+      } catch (error) {
+        globalThis.__gptplusUsageStatuslineReady = false;
+        if (globalThis.__gptplusUsageStatuslineRuntime === runtimeKey) globalThis.__gptplusUsageStatuslineRuntime = "";
+        resolve({ ok: false, error: error && error.message ? error.message : String(error) });
+      }
+    };
+    boot();
+  });
+})()`;
+}
+
+module.exports = { buildUsageStatuslineScript };
