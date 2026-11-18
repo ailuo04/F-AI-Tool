@@ -2412,6 +2412,52 @@ test('重启 ChatGPT：确认后立即撤下红色警示，失败时才恢复', 
   }
 });
 
+test('添加提供商：F-AI 使用与自定义相同的表单，预填字段可编辑', async () => {
+  const tmp = copyRendererToTemp();
+  try {
+    const appMod = await import(pathToFileURL(path.join(tmp, 'app.js')).href);
+    const { renderProviders } = await import(pathToFileURL(path.join(tmp, 'views', 'providers.js')).href);
+    installFakeDom();
+    const ctx = makeCtx(appMod, fixtureState({ providers: [], models: [] }));
+    const root = new FakeNode('main');
+    const actions = new FakeNode('div');
+    renderProviders(root, ctx, actions);
+    const latestModal = () => callsOf(ctx, 'openModal').at(-1)[1];
+
+    click(buttonsWithText(root, '添加提供商')[0]);
+    click(buttonsWithText(latestModal(), '自定义配置')[0]);
+    const custom = latestModal();
+    assert.deepEqual(custom.findTag('input').slice(0, 3).map((input) => input.value), ['', '', '']);
+
+    click(buttonsWithText(actions, '添加提供商')[0]);
+    click(buttonsWithText(latestModal(), 'F-AI')[0]);
+    const modal = latestModal();
+    const inputs = modal.findTag('input');
+    assert.equal(modal.allText(), custom.allText(), '两种选择打开同一套界面');
+    assert.deepEqual(inputs.slice(0, 3).map((input) => input.value), ['F-AI', 'https://api.f-api.site', '']);
+    assert.equal(inputs[2].attributes.type, 'password');
+    assert.equal(buttonsWithText(modal, 'Responses 透传')[0].attributes['aria-pressed'], 'true');
+    assert.ok(buttonsWithText(modal, '从 /models 拉取')[0]);
+    assert.ok(modal.findTag('textarea').length, '保留额外请求头');
+
+    type(inputs[0], 'F-AI 工作账号');
+    type(inputs[1], 'https://api.example.com/v1');
+    type(inputs[2], 'test-fai-key');
+    click(buttonsWithText(modal, 'OpenAI 兼容')[0]);
+    click(buttonsWithText(modal, '保存提供商')[0]);
+    await flush();
+    assert.deepEqual(callsOf(ctx, 'saveProvider').map(([, { name, baseUrl, apiKey, api }]) => ({ name, baseUrl, apiKey, api })), [{
+      name: 'F-AI 工作账号', baseUrl: 'https://api.example.com/v1', apiKey: 'test-fai-key', api: 'openai',
+    }]);
+    assert.equal(callsOf(ctx, 'fetchRemoteModels').length, 0, '保存沿用自定义配置流程');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+    delete globalThis.navigator;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('提供商页：测试连接 / 删除 / 保存 / 从 /models 拉取都能走通', async () => {
   const tmp = copyRendererToTemp();
   try {

@@ -153,7 +153,7 @@ test('usage statusline script retains the composer placement, icons, and valid s
   assert.match(script, /__gptplusUsageStatusline/);
   assert.match(script, /READY_WAIT_MS = 2000/);
   assert.match(script, /SYNC_INTERVAL_MS = 1000/);
-  assert.match(script, /gptplus-usage-statusline-v12/);
+  assert.match(script, /gptplus-usage-statusline-v\d+/);
   assert.match(script, /request\.speed/);
   assert.match(script, /function apply\(id, events, request\)/);
   assert.match(script, /requestTime >= latestTime - 15000/);
@@ -433,7 +433,7 @@ test('statusline delivers fresh request usage before reading the rollout tail', 
   } finally { bridge.stop(); }
 });
 
-test('injected statusline renders one decimal immediately when usage is applied', async () => {
+test('injected statusline retains the last measured speed in each thread', async () => {
   const vm = require('node:vm');
   const nodes = [];
   class Node {
@@ -444,7 +444,8 @@ test('injected statusline renders one decimal immediately when usage is applied'
     remove() { this.isConnected = false; }
   }
   const anchor = { insertAdjacentElement(_position, node) { node.isConnected = true; node.previousElementSibling = anchor; } };
-  const composerRoot = { querySelector: () => ({ getAttribute: () => 'thread_render_1234' }), getAttribute: () => 'thread' };
+  let activeThread = 'thread_render_1234';
+  const composerRoot = { querySelector: () => ({ getAttribute: () => activeThread }), getAttribute: () => 'thread' };
   const card = {
     isConnected: true, parentElement: anchor, getBoundingClientRect: () => ({ width: 600 }),
     closest: selector => selector.includes('data-codex-composer-root') ? composerRoot : null,
@@ -466,14 +467,25 @@ test('injected statusline renders one decimal immediately when usage is applied'
   const script = buildUsageStatuslineScript({ balance: { enabled: true } });
   assert.equal((await vm.runInNewContext(script, sandbox)).installed, true);
   const api = sandbox.__gptplusUsageStatusline;
-  api.apply('thread_render_1234', [], { at: Date.now(), speed: 42.36, speedAvailable: true });
+  const at = Date.now();
+  const first = { at, speed: 42.36, speedAvailable: true, inputTokens: 400, outputTokens: 50 };
+  api.apply(activeThread, [], first);
   const status = nodes.find(node => node.id === 'gptplus-codex-usage-statusline');
   const speedValue = status.children[0].children[1];
   assert.equal(speedValue.textContent, '42.4 tok/s');
-  api.apply('thread_render_1234', [], { at: Date.now(), speed: 42, speedAvailable: true });
+  const event = { t: new Date(at + 300).toISOString(), input_tokens: 800, output_tokens: 0 };
+  api.apply(activeThread, [event], first);
+  assert.equal(speedValue.textContent, '42.4 tok/s', '后续统计暂时不匹配时不得闪回占位符');
+  api.apply(activeThread, null, { at: at + 400, speed: 42, speedAvailable: true });
   assert.equal(speedValue.textContent, '42.0 tok/s');
-  api.apply('thread_render_1234', [], { at: Date.now(), speed: null, speedAvailable: false });
-  assert.equal(speedValue.textContent, '-- tok/s');
+  api.apply(activeThread, [event], { at: at + 500, speed: null, speedAvailable: false });
+  assert.equal(speedValue.textContent, '42.0 tok/s', '没有新测速时保留已有测量值');
+  activeThread = 'thread_render_other';
+  api.context();
+  assert.equal(speedValue.textContent, '-- tok/s', '其他会话没有测速时不得借用旧会话的值');
+  activeThread = 'thread_render_1234';
+  api.context();
+  assert.equal(speedValue.textContent, '42.0 tok/s');
   assert.equal(api.applyBalance({ providerId: 'p_a', balance: '443.48', totalUsed: '79.07', delta: '0.12349', deltaKind: 'cumulative', currency: 'USD', at: Date.now(), ok: true }), true);
   const balanceItem = status.children.find((node) => node.dataset.usage === 'balance');
   api.context();

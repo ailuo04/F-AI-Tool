@@ -20,7 +20,7 @@ function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
   const EXT_ATTR = "data-gptplus-usage-statusline";
   const CIRCUMFERENCE = 37.7;
   const SYNC_INTERVAL_MS = 1000;
-  const runtimeKey = "gptplus-usage-statusline-v12";
+  const runtimeKey = "gptplus-usage-statusline-v13";
   const STYLE_TEXT = ${JSON.stringify(buildUsageStatuslineStyle())};
   const computeUsageSnapshot = ${computeUsageSnapshot.toString()};
   const formatTokenRate = ${formatTokenRate.toString()};
@@ -276,7 +276,7 @@ function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
     ].join("|");
     if (fingerprint === state.fingerprint) return;
     state.fingerprint = fingerprint;
-    if (parts.speed) parts.speed.textContent = labels.speed(speed);
+    if (parts.speed && parts.speed.textContent !== labels.speed(speed)) parts.speed.textContent = labels.speed(speed);
     if (parts.cache) parts.cache.textContent = labels.cache(cache);
     if (parts.context) parts.context.textContent = labels.context(context);
     if (parts.ring) {
@@ -285,7 +285,7 @@ function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
     }
     node.dataset.hidden = String(Object.keys(parts).length === 0);
     const details = [];
-    if (parts.speed) details.push("首包后生成速度 " + speed + " tok/s" + (value?.speedEstimated ? "（估算）" : ""));
+    if (parts.speed) details.push("最近一次有效生成速度 " + speed + " tok/s");
     if (parts.cache) details.push("缓存命中 " + cache + (value?.cacheEstimated ? "（估算）" : ""));
     if (parts.context) details.push("上下文占用 " + context + (value?.contextEstimated ? "（估算）" : ""));
     if (parts.context && value?.window > 0) details.push("窗口 " + value.window);
@@ -308,7 +308,10 @@ function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
     state.threadId = id;
     ensureNode(card);
     const cached = state.cache.get(id);
-    render(computeUsageSnapshot(cached?.events, cached?.request));
+    const snapshot = computeUsageSnapshot(cached?.events, cached?.request);
+    if (cached && snapshot.speed !== null) cached.lastMeasuredSpeed = snapshot.speed;
+    snapshot.speed = snapshot.speed ?? cached?.lastMeasuredSpeed ?? null;
+    render(snapshot);
     if (state.parts?.delta?.dataset.hidden === "false") positionBalanceDelta();
     return { id, changed: id !== previous };
   }
@@ -320,7 +323,7 @@ function buildUsageStatuslineScript({ readyWaitMs, metrics, balance } = {}) {
     const previous = state.cache.get(key);
     const merged = mergeUsageCacheEntry(previous, events, request);
     if (!merged) return false;
-    state.cache.set(key, merged);
+    state.cache.set(key, { ...merged, lastMeasuredSpeed: previous?.lastMeasuredSpeed });
     while (state.cache.size > 32) state.cache.delete(state.cache.keys().next().value);
     sync();
     return true;

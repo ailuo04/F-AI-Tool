@@ -5,7 +5,7 @@
 //   2. 代码中唯一的 innerHTML 用法是 ICONS 表里的静态图标字面量（见 icon()）。
 //   3. 没有远程资源：无 fetch、无外部字体、无 CDN（CSP 也是 default-src 'none'）。
 
-import { renderProviders, openProviderForm, closeProviderForm, installProviderDropGuard } from './views/providers.js';
+import { renderProviders, openAddProvider, openProviderForm, closeProviderForm, installProviderDropGuard } from './views/providers.js';
 import { dragRowOffsets, dragTargetIndex, renderModels, reorderModelKeys } from './views/models.js';
 import { renderUsage, usageRows } from './views/usage.js';
 import { openPeerSettings, renderSettings } from './views/settings.js';
@@ -1816,7 +1816,7 @@ const ctx = {
   openModal,
   closeModal,
   isModalOpen,
-  openProviderForm: (providerId) => openProviderForm(ctx, providerId),
+  openProviderForm: (providerId) => providerId ? openProviderForm(ctx, providerId) : openAddProvider(ctx),
   closeProviderForm: () => closeProviderForm(),
   openPeerSettings: () => openPeerSettings(ctx),
   dragRowOffsets,

@@ -122,7 +122,7 @@ export function renderProviders(root, ctx, actions) {
     el('button', {
       class: 'btn btn-primary',
       type: 'button',
-      on: { click: () => openProviderForm(ctx, null) },
+      on: { click: () => openAddProvider(ctx) },
     }, [icon('plus', 13), el('span', { text: '添加提供商' })]),
   );
 
@@ -213,13 +213,13 @@ function emptyState(ctx) {
     el('div', { class: 'empty-title', text: '还没有任何提供商' }),
     el('div', {
       class: 'empty-text',
-      text: '点击右上角「添加提供商」，填入 Base URL 与 API Key。保存后可以点「从 /models 拉取」自动获取模型列表，再把它们注入 ChatGPT 的模型选择器。',
+      text: '选择 F-AI 预设，只需填写 API Key 即可导入模型。也可以选择自定义配置，接入其他提供商。',
     }),
     el('div', { class: 'empty-actions' }, [
       el('button', {
         class: 'btn btn-primary',
         type: 'button',
-        on: { click: () => openProviderForm(ctx, null) },
+        on: { click: () => openAddProvider(ctx) },
       }, [icon('plus', 13), el('span', { text: '添加提供商' })]),
       el('button', {
         class: 'btn btn-ghost',
@@ -1254,6 +1254,38 @@ function confirmDeleteProvider(ctx, p) {
   ctx.openModal(modal);
 }
 
+// ============ 添加提供商 ============
+const FAI_PROVIDER_PRESET = Object.freeze({ name: 'F-AI', baseUrl: 'https://api.f-api.site', api: 'responses' });
+
+export function openAddProvider(ctx) {
+  const { el, icon } = ctx;
+  function presetCard(name, description, glyph, select, recommended = false) {
+    return el('button', {
+      class: `btn provider-preset-card ${recommended ? 'btn-accent' : 'btn-ghost'}`,
+      type: 'button',
+      on: { click: select },
+    }, [
+      el('span', { class: 'provider-transfer-zone-icon' }, [glyph]),
+      el('span', { class: 'provider-preset-copy' }, [
+        el('strong', { text: name }),
+        el('span', { class: 'hint', text: description }),
+      ]),
+    ]);
+  }
+  const choices = el('div', { class: 'modal-body provider-preset-grid' }, [
+    presetCard(FAI_PROVIDER_PRESET.name, new URL(FAI_PROVIDER_PRESET.baseUrl).hostname, icon('plug', 17),
+      () => openProviderForm(ctx, null, FAI_PROVIDER_PRESET), true),
+    presetCard('自定义配置', '手动填写接口地址与 API Key', icon('box', 17), () => openProviderForm(ctx)),
+  ]);
+  ctx.openModal(el('div', { class: 'modal provider-preset-modal', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加提供商' } }, [
+    el('div', { class: 'modal-head' }, [el('h2', { text: '添加提供商' })]),
+    choices,
+    el('div', { class: 'modal-foot' }, [el('span', { class: 'right' }), el('button', {
+      class: 'btn btn-ghost', type: 'button', text: '取消', on: { click: () => ctx.closeModal() },
+    })]),
+  ]));
+}
+
 // ============ 编辑表单 ============
 let activeCtx = null;
 
@@ -1262,23 +1294,23 @@ export function closeProviderForm() {
 }
 
 /**
- * 打开提供商编辑表单（providerId 为空表示新建）。
+ * 打开提供商编辑表单（providerId 为空表示新建，可传入预设初始值）。
  * @param {any} ctx
  * @param {string|null} providerId
+ * @param {{name?: string, baseUrl?: string, api?: string}} preset
  */
-export function openProviderForm(ctx, providerId = null) {
+export function openProviderForm(ctx, providerId = null, preset = {}) {
   const { el, icon } = ctx;
   activeCtx = ctx;
   const existing = providerId ? (ctx.state.providers || []).find((p) => p.id === providerId) : null;
+  const initial = existing || preset;
 
   const draft = {
     id: existing ? existing.id : null,
-    name: existing ? existing.name : '',
-    baseUrl: existing ? existing.baseUrl : '',
+    name: initial.name || '',
+    baseUrl: initial.baseUrl || '',
     apiKey: existing ? existing.apiKey || '' : '',
-    api: existing && (existing.api === 'openai' || existing.api === 'anthropic' || existing.api === 'responses')
-      ? existing.api
-      : 'responses',
+    api: Object.hasOwn(API_LABELS, initial.api) ? initial.api : 'responses',
     enabled: existing ? existing.enabled !== false : true,
     headers: Object.entries((existing && existing.headers) || {}).map(([key, value]) => ({ key, value })),
     models: ((existing && existing.models) || []).map((m) => ({
@@ -1300,7 +1332,7 @@ export function openProviderForm(ctx, providerId = null) {
     type: 'text',
     value: draft.name,
     placeholder: 'XXX',
-    attrs: { 'data-autofocus': 'true', autocomplete: 'off' },
+    attrs: { 'data-autofocus': !existing && preset.name ? null : 'true', autocomplete: 'off' },
     on: { input: (e) => { draft.name = e.target.value; clearError(refs.nameErr); } },
   });
   const baseInput = el('input', {
@@ -1316,7 +1348,7 @@ export function openProviderForm(ctx, providerId = null) {
     type: 'password',
     value: draft.apiKey,
     placeholder: 'sk-…（可留空，读取环境变量或使用无鉴权接口）',
-    attrs: { autocomplete: 'off', spellcheck: 'false' },
+    attrs: { 'data-autofocus': !existing && preset.name ? 'true' : null, autocomplete: 'off', spellcheck: 'false' },
     on: { input: (e) => { draft.apiKey = e.target.value; } },
   });
   const keyToggle = el('button', {

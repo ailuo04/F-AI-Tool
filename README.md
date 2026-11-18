@@ -4,7 +4,7 @@
 
 **在 Windows 版 ChatGPT 的模型选择器里使用自己配置的模型。** F-AI Tool 管理模型供应商、API Key 和模型清单，并通过本地网关把对话请求发给所选服务。
 
-**[下载 F-AI Tool v1.0.2（Windows x64）](https://github.com/ailuo04/F-AI-Tool/releases/download/v1.0.2/F-AI-Tool-1.0.2-setup.exe)** · [查看发布说明](https://github.com/ailuo04/F-AI-Tool/releases/tag/v1.0.2)
+**[下载 F-AI Tool v1.0.3（Windows x64）](https://github.com/ailuo04/F-AI-Tool/releases/download/v1.0.3/F-AI-Tool-1.0.3-setup.exe)** · [查看发布说明](https://github.com/ailuo04/F-AI-Tool/releases/tag/v1.0.3)
 
 当前安装包未签名，Windows 可能显示“未知发布者”。接入模型需要提供商的服务地址和 API Key。
 

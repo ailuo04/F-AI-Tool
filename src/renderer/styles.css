@@ -1619,6 +1619,13 @@ html.is-theme-switching .logs {
   color: var(--accent-hi);
 }
 .provider-transfer-zone-title { color: var(--fg); font-weight: 650; }
+
+.modal.provider-preset-modal { width: min(100%, 540px); }
+.provider-preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 174px), 1fr)); gap: var(--sp-2); }
+.modal-body.provider-preset-grid > * { margin-top: 0; }
+.provider-preset-grid .provider-preset-card { justify-content: flex-start; min-width: 0; padding: 10px; text-align: left; white-space: normal; }
+.provider-preset-card .provider-transfer-zone-icon { flex-shrink: 0; }
+.provider-preset-copy { display: grid; gap: 3px; overflow-wrap: anywhere; }
 .provider-select { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 22px; width: 22px; height: 22px; cursor: pointer; }
 .provider-select input { position: absolute; opacity: 0; pointer-events: none; }
 .provider-select-mark {
