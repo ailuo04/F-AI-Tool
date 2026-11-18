@@ -4,7 +4,7 @@
 
 **在 Windows 版 ChatGPT 的模型选择器里使用自己配置的模型。** F-AI Tool 管理模型供应商、API Key 和模型清单，并通过本地网关把对话请求发给所选服务。
 
-**[下载 F-AI Tool v1.0.0（Windows x64）](https://github.com/ailuo04/F-AI-Tool/releases/download/v1.0.0/F-AI-Tool-1.0.0-setup.exe)** · [查看发布说明](https://github.com/ailuo04/F-AI-Tool/releases/tag/v1.0.0)
+**[下载 F-AI Tool v1.0.1（Windows x64）](https://github.com/ailuo04/F-AI-Tool/releases/download/v1.0.1/F-AI-Tool-1.0.1-setup.exe)** · [查看发布说明](https://github.com/ailuo04/F-AI-Tool/releases/tag/v1.0.1)
 
 当前安装包未签名，Windows 可能显示“未知发布者”。接入模型需要提供商的服务地址和 API Key。
 
@@ -15,7 +15,7 @@
 - **用量统计**　查看请求记录、延迟和 Token 用量，按提供商及模型筛选。
 - **可选插件**　按需启用自定义生图、语音输入、微信连接或 ChatGPT 用量信息栏。
 
-公开版使用自己的数据目录。已在当前 Windows 账号使用自用版时，请在独立 Windows 账号或虚拟机里运行 F-AI Tool。
+公开版使用自己的数据目录。检测到自用版配置时，关闭提醒即可进入。两版共用当前 Windows 账号的 ChatGPT/Codex 配置。切换时，请先在当前版本关闭注入并退出，再在另一版启用注入并重启 ChatGPT。
 
 ```
 ChatGPT 客户端 ──► 本地网关 127.0.0.1:18121 ──► 你的提供商

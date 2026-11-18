@@ -14,6 +14,49 @@ test('冒烟测试在语音模块读取路径前隔离数据目录', () => {
   const speechImport = mainSource.indexOf("require('../core/local-speech.js')");
   assert.ok(isolation >= 0 && voiceImport > isolation && speechImport > isolation);
 });
+
+test('发现自用版配置时显示提醒，关闭提醒后继续启动', async () => {
+  const calls = [];
+  let dismissWarning;
+  const warning = new Promise((resolve) => { dismissWarning = resolve; });
+  const electron = {
+    app: {
+      setAppUserModelId() {},
+      getPath: () => 'C:\\test\\AppData',
+      getVersion: () => '1.0.0',
+      requestSingleInstanceLock: () => true,
+      whenReady: async () => {},
+      on() {},
+      exit: () => calls.push('exit'),
+      quit: () => calls.push('quit'),
+    },
+    dialog: {
+      showErrorBox: () => calls.push('error'),
+      showMessageBox: ({ type }) => { calls.push(type); return warning; },
+    },
+    Menu: { setApplicationMenu() {} },
+  };
+  const imports = {
+    electron,
+    'node:path': path,
+    'node:fs': fs,
+    '../edition.js': require('../src/edition.js'),
+    '../core/paths.js': { hasPrivateProfile: () => true },
+    '../core/context.js': {
+      createContext: () => { calls.push('start'); return new Promise(() => {}); },
+    },
+  };
+  vm.runInNewContext(`(function (require, process) { ${mainSource}\n})(require, process)`, {
+    require: (id) => imports[id] || {},
+    process: { argv: [], env: {}, platform: 'win32', on() {} },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ['warning']);
+  dismissWarning({ response: 0 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ['warning', 'start']);
+});
+
 const startupSource = mainSource.slice(
   mainSource.indexOf('function readStartupSettings()'),
   mainSource.indexOf('function createTray()'),

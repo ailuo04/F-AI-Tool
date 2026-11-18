@@ -90,12 +90,6 @@ if (isSmoke) {
   process.env.CODEX_HOME = path.join(sandbox, 'codex');
 }
 
-if (!isSmoke && !isQuitRequest && require('../core/paths.js').hasPrivateProfile(app.getPath('appData'))) {
-  dialog.showErrorBox(`无法启动 ${APP_NAME}`, '当前 Windows 账号已有自用版配置。为保护现有 ChatGPT/Codex 配置，请在独立 Windows 账号或虚拟机中运行公开版。');
-  app.exit(1);
-  return;
-}
-
 // 语音模块会在加载时读取 paths.js；必须先完成冒烟测试目录隔离。
 const {
   disposeVoiceInput,
@@ -664,6 +658,15 @@ async function boot() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  if (!isSmoke && require('../core/paths.js').hasPrivateProfile(app.getPath('appData'))) {
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: APP_NAME,
+      message: '检测到自用版 gpt++ 配置',
+      detail: '两版共用当前 Windows 账号的 ChatGPT/Codex 配置。切换使用时，请先在当前版本关闭注入并退出，再在另一版启用注入并重启 ChatGPT。',
+      buttons: ['继续使用'],
+    });
+  }
   await boot();
 
   app.on('activate', () => {

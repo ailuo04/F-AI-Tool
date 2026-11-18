@@ -35,7 +35,7 @@ test('the desktop window and sidebar display the public name', () => {
   assert.match(html, /<strong>F-AI Tool<\/strong>/);
 });
 
-test('public config ignores legacy overrides and blocks shared private profiles', (t) => {
+test('public config ignores legacy overrides and detects private profiles', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gptplus-public-test-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const legacy = path.join(home, 'legacy-custom');
@@ -44,7 +44,7 @@ test('public config ignores legacy overrides and blocks shared private profiles'
   const loadProfile = (env) => {
     const result = spawnSync(process.execPath, ['-e', `
       const paths = require('./src/core/paths.js');
-      process.stdout.write(JSON.stringify({ app: paths.APP_DIR, blocked: paths.hasPrivateProfile?.() }));
+      process.stdout.write(JSON.stringify({ app: paths.APP_DIR, hasPrivateProfile: paths.hasPrivateProfile() }));
     `], {
       cwd: path.join(__dirname, '..'), encoding: 'utf8',
       env: { ...process.env, HOME: home, USERPROFILE: home, GPTPLUS_PUBLIC_HOME: '', GPTPLUS_HOME: '', ...env },
@@ -53,10 +53,10 @@ test('public config ignores legacy overrides and blocks shared private profiles'
     return JSON.parse(result.stdout);
   };
   const publicDir = path.join(home, '.gptplus-public');
-  assert.deepEqual(loadProfile({ GPTPLUS_HOME: legacy }), { app: publicDir, blocked: true });
-  assert.deepEqual(loadProfile({}), { app: publicDir, blocked: false });
+  assert.deepEqual(loadProfile({ GPTPLUS_HOME: legacy }), { app: publicDir, hasPrivateProfile: true });
+  assert.deepEqual(loadProfile({}), { app: publicDir, hasPrivateProfile: false });
   fs.mkdirSync(path.join(home, '.gptplus'));
-  assert.deepEqual(loadProfile({}), { app: publicDir, blocked: true });
+  assert.deepEqual(loadProfile({}), { app: publicDir, hasPrivateProfile: true });
   assert.equal(fs.readFileSync(path.join(legacy, 'config.json'), 'utf8'), 'unchanged');
   assert.equal(fs.existsSync(publicDir), false);
 });

@@ -19,8 +19,8 @@ function resolveAppDir() {
   return path.join(HOME, DATA_DIR_NAME);
 }
 
-// Do not share the ChatGPT/Codex client with the private edition. Treat an
-// inaccessible legacy directory as a conflict rather than assuming it is absent.
+// Detect legacy profiles for the shared ChatGPT/Codex configuration warning.
+// An inaccessible directory may also contain a private profile.
 function hasPrivateProfile(appData) {
   const privateHome = process.env.GPTPLUS_HOME?.trim();
   const candidates = [path.join(HOME, '.gptplus')];
