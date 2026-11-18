@@ -412,7 +412,7 @@ function createWindow() {
     if (rendererReady || !win || win.isDestroyed()) return;
     const visibleTheme = rendererTheme === 'light' ? 'light' : 'dark';
     // renderer 已完成首帧主题计算后，再同步原生窗口底色，避免两套主题短暂不一致。
-    win.setBackgroundColor(visibleTheme === 'light' ? '#e9edf2' : '#07080a');
+    win.setBackgroundColor(visibleTheme === 'light' ? '#f7f7f6' : '#181818');
     rendererReady = true;
     windowReady = true;
     if (readyFallback) {
@@ -429,7 +429,7 @@ function createWindow() {
     minWidth: 940,
     minHeight: 620,
     // 原生窗口先用已保存主题的底色，避免页面加载期间出现黑色首帧。
-    backgroundColor: resolvedTheme === 'light' ? '#e9edf2' : '#07080a',
+    backgroundColor: resolvedTheme === 'light' ? '#f7f7f6' : '#181818',
     show: false,
     // Windows 合成器在隐藏窗口首次提交 surface 时可能短暂使用黑色；透明度归零可以把这次提交隔离在不可见状态。
     opacity: 0,
